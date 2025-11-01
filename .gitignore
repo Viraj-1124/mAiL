@@ -1,0 +1,19 @@
+# Python cache and build files
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+mAiL/
+venv/
+env/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Sensitive files
+.env
+credentials.json
+token.json
