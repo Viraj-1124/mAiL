@@ -1,20 +1,21 @@
-# Python cache and build files
+# Python cache
 __pycache__/
 *.pyc
-*.pyo
 
 # Virtual environment
 mAiL/
 venv/
 env/
 
-# IDE and OS files
+# Credentials and tokens
+credentials.json
+tokens/
+*.db
+
+# IDE files
 .vscode/
 .idea/
 .DS_Store
 
-# Sensitive files
-.env
-credentials.json
-tokens/
-*.db
+# OS junk
+Thumbs.db
