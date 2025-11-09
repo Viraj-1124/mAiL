@@ -4,9 +4,10 @@ __pycache__/
 
 # Virtual environment
 mAiL/
+.venv/
 venv/
 env/
-
+.env/
 # Credentials and tokens
 credentials.json
 tokens/
