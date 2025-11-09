@@ -80,3 +80,8 @@ Deploy backend (Render / Railway)
 Rushikesh Shinde
 📍VIT Pune | B.Tech CSE
 💡 Passionate about AI, automation, and smart systems.
+
+👨‍💻 Collaborator
+Guruprasad Melinkeri
+📍VIT Pune | B.Tech CSE
+💡Building backends and ML Magic. 
