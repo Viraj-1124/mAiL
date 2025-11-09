@@ -1,0 +1,157 @@
+from fastapi import FastAPI, Request, Form
+from fastapi.middleware.cors import CORSMiddleware
+from google_auth_oauthlib.flow import Flow
+import os
+import json
+import requests
+from email_summarizer.email_summarizer import (
+    authenticate_gmail,
+    get_last_24h_emails,
+    get_email_details,
+    summarize_email,
+    analyze_emails_with_ai
+)
+from database import save_feedback, get_all_feedback, get_feedback_stats
+
+app = FastAPI()
+
+# Gmail + Google scopes
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile"
+]
+
+# Allow frontend requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+def root():
+    return {"message": "mAiL API is running 🚀"}
+
+@app.get("/login-url")
+def login_url():
+    flow = Flow.from_client_secrets_file(
+        'credentials.json',
+        scopes=SCOPES,
+        redirect_uri='http://localhost:8000/auth/callback'
+    )
+    auth_url, _ = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent'
+    )
+    return {"auth_url": auth_url}
+
+@app.get("/auth/callback")
+def auth_callback(code: str):
+    flow = Flow.from_client_secrets_file(
+        'credentials.json',
+        scopes=SCOPES,
+        redirect_uri='http://localhost:8000/auth/callback'
+    )
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+
+    user_email = None
+
+    # ✅ Extract email info
+    try:
+        if creds.id_token and "email" in creds.id_token:
+            user_email = creds.id_token["email"]
+        else:
+            response = requests.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {creds.token}"}
+            )
+            user_email = response.json().get("email", "unknown")
+    except Exception as e:
+        return {"error": f"Failed to fetch user info: {str(e)}"}
+
+    # ✅ Ensure refresh_token exists
+    if not creds.refresh_token:
+        print("⚠️ Missing refresh_token. User must re-consent next login.")
+
+    os.makedirs("tokens", exist_ok=True)
+    with open(f"tokens/{user_email}.json", "w") as token_file:
+        token_file.write(creds.to_json())
+
+    print(f"✅ Logged in as: {user_email}")
+    return {"success": True, "user_email": user_email}
+
+@app.get("/fetch-emails")
+def fetch_emails(user_email: str):
+    token_path = f"tokens/{user_email}.json"
+    if not os.path.exists(token_path):
+        return {"error": f"No token found for {user_email}. Please re-login via /login-url."}
+
+    try:
+        service = authenticate_gmail(user_email)
+    except Exception as e:
+        return {"error": f"Authentication failed. Please re-login.", "details": str(e)}
+    
+    messages = get_last_24h_emails(service)
+
+    if not messages:
+        return {"overall_summary": "No new emails in last 24 hours", "emails": []}
+
+    emails = []
+    for msg in messages[:15]:
+        sender, subject, body = get_email_details(service, msg['id'])
+        summary = summarize_email(subject, body)
+
+        emails.append({
+            "email_id": msg['id'],
+            "from": sender,
+            "subject": subject,
+            "summary": summary
+        })
+
+    ai_data = analyze_emails_with_ai(emails)
+
+    # Attach priority
+    for email in emails:
+        match = next((p for p in ai_data["priorities"] if p["subject"] == email["subject"]), None)
+        email["priority"] = match["priority"] if match else "Medium"
+
+    return {
+        "overall_summary": ai_data["overall_summary"],
+        "emails": emails
+    }
+
+@app.post("/feedback")
+async def feedback(
+    email_id: str = Form(None),
+    priority: str = Form(None),
+    is_correct: str = Form(None),
+    request: Request = None
+):
+    try:
+        data = await request.json()
+        email_id = email_id or data.get("email_id") or data.get("id") or data.get("emailId")
+        priority = priority or data.get("priority") or data.get("prioritySelected")
+        is_correct = is_correct or data.get("is_correct") or data.get("correct")
+    except:
+        pass  # fallback for Form data
+
+    is_correct = True if str(is_correct).lower() in ["true", "1", "yes"] else False
+
+    if not email_id or not priority:
+        return {"success": False, "error": "Missing required fields"}
+
+    return save_feedback(email_id, priority, is_correct)
+
+@app.get("/feedback")
+def feedback_list():
+    return get_all_feedback()
+
+@app.get("/feedback-stats")
+def feedback_stats():
+    return get_feedback_stats()
