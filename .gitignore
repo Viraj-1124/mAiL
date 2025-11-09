@@ -16,4 +16,5 @@ env/
 # Sensitive files
 .env
 credentials.json
-token.json
+tokens/
+*.db
