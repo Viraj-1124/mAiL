@@ -1,9 +1,13 @@
-from fastapi import FastAPI, Request, Form
+# server.py
+from fastapi import FastAPI, Request, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 from google_auth_oauthlib.flow import Flow
 import os
 import json
 import requests
+
+# Gmail summarizer functions
 from email_summarizer.email_summarizer import (
     authenticate_gmail,
     get_last_24h_emails,
@@ -11,11 +15,17 @@ from email_summarizer.email_summarizer import (
     summarize_email,
     analyze_emails_with_ai
 )
-from database import save_feedback, get_all_feedback, get_feedback_stats
+
+# ORM imports
+from database.database import Base, engine, get_db
+from database.models import Feedback
+
+# Create tables automatically
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# Gmail + Google scopes
+# Gmail scopes
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "openid",
@@ -23,7 +33,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile"
 ]
 
-# Allow frontend requests
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,12 +42,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def root():
     return {"message": "mAiL API is running 🚀"}
 
+
 @app.get("/login-url")
 def login_url():
+    """Generate Gmail OAuth URL"""
     flow = Flow.from_client_secrets_file(
         'credentials.json',
         scopes=SCOPES,
@@ -50,8 +63,10 @@ def login_url():
     )
     return {"auth_url": auth_url}
 
+
 @app.get("/auth/callback")
 def auth_callback(code: str):
+    """Google OAuth callback"""
     flow = Flow.from_client_secrets_file(
         'credentials.json',
         scopes=SCOPES,
@@ -61,8 +76,6 @@ def auth_callback(code: str):
     creds = flow.credentials
 
     user_email = None
-
-    # ✅ Extract email info
     try:
         if creds.id_token and "email" in creds.id_token:
             user_email = creds.id_token["email"]
@@ -75,7 +88,6 @@ def auth_callback(code: str):
     except Exception as e:
         return {"error": f"Failed to fetch user info: {str(e)}"}
 
-    # ✅ Ensure refresh_token exists
     if not creds.refresh_token:
         print("⚠️ Missing refresh_token. User must re-consent next login.")
 
@@ -86,19 +98,20 @@ def auth_callback(code: str):
     print(f"✅ Logged in as: {user_email}")
     return {"success": True, "user_email": user_email}
 
+
 @app.get("/fetch-emails")
 def fetch_emails(user_email: str):
+    """Fetch last 24h Gmail emails and summarize"""
     token_path = f"tokens/{user_email}.json"
     if not os.path.exists(token_path):
-        return {"error": f"No token found for {user_email}. Please re-login via /login-url."}
+        return {"error": f"No token found for {user_email}. Please re-login."}
 
     try:
         service = authenticate_gmail(user_email)
     except Exception as e:
-        return {"error": f"Authentication failed. Please re-login.", "details": str(e)}
+        return {"error": "Authentication failed. Please re-login.", "details": str(e)}
     
     messages = get_last_24h_emails(service)
-
     if not messages:
         return {"overall_summary": "No new emails in last 24 hours", "emails": []}
 
@@ -106,7 +119,6 @@ def fetch_emails(user_email: str):
     for msg in messages[:15]:
         sender, subject, body = get_email_details(service, msg['id'])
         summary = summarize_email(subject, body)
-
         emails.append({
             "email_id": msg['id'],
             "from": sender,
@@ -116,7 +128,6 @@ def fetch_emails(user_email: str):
 
     ai_data = analyze_emails_with_ai(emails)
 
-    # Attach priority
     for email in emails:
         match = next((p for p in ai_data["priorities"] if p["subject"] == email["subject"]), None)
         email["priority"] = match["priority"] if match else "Medium"
@@ -126,32 +137,68 @@ def fetch_emails(user_email: str):
         "emails": emails
     }
 
+
 @app.post("/feedback")
 async def feedback(
     email_id: str = Form(None),
     priority: str = Form(None),
     is_correct: str = Form(None),
-    request: Request = None
+    request: Request = None,
+    db: Session = Depends(get_db)
 ):
+    """Save user feedback to ORM database"""
     try:
         data = await request.json()
         email_id = email_id or data.get("email_id") or data.get("id") or data.get("emailId")
         priority = priority or data.get("priority") or data.get("prioritySelected")
         is_correct = is_correct or data.get("is_correct") or data.get("correct")
     except:
-        pass  # fallback for Form data
+        pass
 
     is_correct = True if str(is_correct).lower() in ["true", "1", "yes"] else False
 
     if not email_id or not priority:
         return {"success": False, "error": "Missing required fields"}
 
-    return save_feedback(email_id, priority, is_correct)
+    feedback = Feedback(email_id=email_id, priority=priority, is_correct=is_correct)
+    db.add(feedback)
+    db.commit()
+    db.refresh(feedback)
+
+    return {"success": True, "message": "Feedback saved successfully"}
+
 
 @app.get("/feedback")
-def feedback_list():
-    return get_all_feedback()
+def feedback_list(db: Session = Depends(get_db)):
+    """Return all feedback records"""
+    feedbacks = db.query(Feedback).order_by(Feedback.timestamp.desc()).all()
+    return [
+        {
+            "email_id": f.email_id,
+            "priority": f.priority,
+            "is_correct": f.is_correct,
+            "timestamp": f.timestamp
+        }
+        for f in feedbacks
+    ]
+
 
 @app.get("/feedback-stats")
-def feedback_stats():
-    return get_feedback_stats()
+def feedback_stats(db: Session = Depends(get_db)):
+    """Get feedback statistics"""
+    total = db.query(Feedback).count()
+    correct = db.query(Feedback).filter(Feedback.is_correct == True).count()
+    priorities = db.query(Feedback.priority).all()
+
+    priority_count = {}
+    for (p,) in priorities:
+        priority_count[p] = priority_count.get(p, 0) + 1
+
+    accuracy = round((correct / total * 100) if total > 0 else 0, 2)
+
+    return {
+        "total_feedback": total,
+        "correct_classifications": correct,
+        "accuracy": accuracy,
+        "feedback_by_priority": priority_count
+    }
