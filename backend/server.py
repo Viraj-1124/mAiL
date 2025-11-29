@@ -1,5 +1,5 @@
 # server.py
-from fastapi import FastAPI, Request, Form, Depends
+from fastapi import FastAPI, Request, Form, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from google_auth_oauthlib.flow import Flow
@@ -17,8 +17,8 @@ from email_summarizer.email_summarizer import (
 )
 
 # ORM imports
-from database.database import Base, engine, get_db
-from database.models import Feedback
+from database.database import Base, engine, get_db, SessionLocal
+from database.models import Feedback, Email
 
 # Create tables automatically
 Base.metadata.create_all(bind=engine)
@@ -99,6 +99,39 @@ def auth_callback(code: str):
     return {"success": True, "user_email": user_email}
 
 
+def update_email_priority(email_id, new_priority):
+    db = SessionLocal()
+    email_obj = db.query(Email).filter(Email.email_id == email_id).first()
+    if email_obj:
+        email_obj.priority = new_priority
+        db.commit()
+    db.close()
+
+
+def save_email(email_id, user_email, sender, subject, body, summary, priority):
+    db = SessionLocal()
+
+    # Avoid duplicates
+    existing = db.query(Email).filter(Email.email_id == email_id).first()
+    if existing:
+        db.close()
+        return
+
+    new_email = Email(
+        email_id=email_id,
+        user_email=user_email,
+        sender=sender,
+        subject=subject,
+        body=body,
+        summary=summary,
+        priority=priority
+    )
+
+    db.add(new_email)
+    db.commit()
+    db.close()
+
+
 @app.get("/fetch-emails")
 def fetch_emails(user_email: str):
     """Fetch last 24h Gmail emails and summarize"""
@@ -120,23 +153,69 @@ def fetch_emails(user_email: str):
         sender, subject, body = get_email_details(service, msg['id'])
         summary = summarize_email(subject, body)
         emails.append({
-            "email_id": msg['id'],
+            "email_id": msg["id"],
             "from": sender,
             "subject": subject,
             "summary": summary
         })
 
+        save_email(
+        email_id=msg["id"],
+        user_email=user_email,
+        sender=sender,
+        subject=subject,
+        body=body,
+        summary=summary,
+        priority="Medium"  # temporarily
+        )
+
     ai_data = analyze_emails_with_ai(emails)
 
     for email in emails:
         match = next((p for p in ai_data["priorities"] if p["subject"] == email["subject"]), None)
-        email["priority"] = match["priority"] if match else "Medium"
+        final_priority = match["priority"] if match else "Medium"
+        email["priority"] = final_priority
+
+        update_email_priority(email["email_id"], final_priority)
 
     return {
         "overall_summary": ai_data["overall_summary"],
         "emails": emails
     }
 
+
+@app.get("/search")
+def search_emails(
+    user_email: str,
+    q: str = Query(..., description="Search text"),
+    db: Session = Depends(get_db)
+):
+    """Search emails by subject, sender, body, or summary"""
+
+    query_str = f"%{q.lower()}%"
+
+    results = db.query(Email).filter(
+        Email.user_email == user_email,
+        (
+            Email.subject.ilike(query_str) |
+            Email.sender.ilike(query_str) |
+            Email.body.ilike(query_str) |
+            Email.summary.ilike(query_str) |
+            Email.priority.ilike(query_str)
+        )
+    ).all()
+
+    return [
+        {
+            "email_id": e.email_id,
+            "sender": e.sender,
+            "subject": e.subject,
+            "summary": e.summary,
+            "priority": e.priority,
+            "timestamp": e.timestamp
+        }
+        for e in results
+    ]
 
 @app.post("/feedback")
 async def feedback(
