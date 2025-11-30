@@ -23,5 +23,6 @@ class Email(Base):
     body = Column(String, nullable=True)
     summary = Column(String, nullable=True)
     priority = Column(String, default="Medium")
+    category = Column(String, default="Uncategorized")
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 

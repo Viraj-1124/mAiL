@@ -145,6 +145,40 @@ def analyze_emails_with_ai(emails):
         return {"overall_summary": raw_output, "priorities": []}
 
 
+def categorize_email_with_ai(subject, body):
+    """Return a category for the given email."""
+
+    prompt = f"""
+    Categorize the following email into ONE of the predefined categories:
+
+    Categories:
+    - Work
+    - College
+    - Bank / Finance
+    - Offers / Promotions
+    - Personal
+    - Security Alerts
+    - Conferences
+    - Bills / Tickets
+    - Spam
+    - Others
+
+    Email:
+    Subject: {subject}
+    Body: {body[:500]}
+
+    Return ONLY the category name.
+    """
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    category = response.choices[0].message.content.strip()
+    return category
+
+
 def main():
     """Run manual test for local debugging."""
     print("🔑 Authenticating...")

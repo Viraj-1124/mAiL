@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request, Form, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from google_auth_oauthlib.flow import Flow
+from email_summarizer.email_summarizer import categorize_email_with_ai
 import os
 import json
 import requests
@@ -116,6 +117,8 @@ def save_email(email_id, user_email, sender, subject, body, summary, priority):
     if existing:
         db.close()
         return
+    
+    category = categorize_email_with_ai(subject, body)
 
     new_email = Email(
         email_id=email_id,
@@ -124,7 +127,8 @@ def save_email(email_id, user_email, sender, subject, body, summary, priority):
         subject=subject,
         body=body,
         summary=summary,
-        priority=priority
+        priority=priority,
+        category=category
     )
 
     db.add(new_email)
@@ -182,6 +186,22 @@ def fetch_emails(user_email: str):
         "overall_summary": ai_data["overall_summary"],
         "emails": emails
     }
+
+
+@app.post("/categorize")
+def categorize(email_id: str, db: Session = Depends(get_db)):
+    """AI categorizes a stored email and updates DB."""
+    
+    email = db.query(Email).filter(Email.email_id == email_id).first()
+    if not email:
+        return {"error": "Email not found"}
+
+    category = categorize_email_with_ai(email.subject, email.body)
+
+    email.category = category
+    db.commit()
+
+    return {"success": True, "email_id": email_id, "category": category}
 
 
 @app.get("/search")
