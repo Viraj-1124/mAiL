@@ -66,7 +66,6 @@ def get_last_24h_emails(service):
 
 
 def get_email_details(service, msg_id):
-    """Extract sender, subject, and body content."""
     msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
     headers = msg['payload']['headers']
 
@@ -94,7 +93,9 @@ def get_email_details(service, msg_id):
         if data:
             body = base64.urlsafe_b64decode(data).decode('utf-8')
 
-    return sender, subject, body.strip().replace('\r', '').replace('\n', ' ')[:1000]
+    clean_body = body.strip().replace('\r', '').replace('\n', ' ')[:1000]
+
+    return sender, subject, clean_body, msg.get("threadId")
 
 
 def summarize_email(subject, body):

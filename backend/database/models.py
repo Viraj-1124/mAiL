@@ -24,5 +24,7 @@ class Email(Base):
     summary = Column(String, nullable=True)
     priority = Column(String, default="Medium")
     category = Column(String, default="Uncategorized")
+    thread_id = Column(String)
+    smart_thread_id = Column(String, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
