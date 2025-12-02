@@ -146,29 +146,37 @@ def analyze_emails_with_ai(emails):
         return {"overall_summary": raw_output, "priorities": []}
 
 
-def categorize_email_with_ai(subject, body):
-    """Return a category for the given email."""
+def categorize_email_with_ai(subject, body, sender=None):
+    """Advanced intelligent categorization using GPT."""
 
     prompt = f"""
-    Categorize the following email into ONE of the predefined categories:
+    Analyze the email and assign the MOST appropriate category.
+    
+    You MUST choose from these categories ONLY:
 
-    Categories:
     - Work
     - College
-    - Bank / Finance
-    - Offers / Promotions
     - Personal
-    - Security Alerts
-    - Conferences
-    - Bills / Tickets
+    - Bank/Finance
+    - Offers/Promotions
+    - Travel/Tickets
+    - Bills/Payments
+    - Security Alert
+    - Subscriptions/Newsletters
+    - Events/Conferences
+    - Important/Deadline
+    - LinkedIn
     - Spam
-    - Others
 
-    Email:
+    Email details:
+    Sender: {sender}
     Subject: {subject}
-    Body: {body[:500]}
+    Body: {body[:1000]}
 
-    Return ONLY the category name.
+    Return JSON in this exact format:
+    {{
+        "category": "CategoryName"
+    }}
     """
 
     response = client.chat.completions.create(
@@ -176,8 +184,40 @@ def categorize_email_with_ai(subject, body):
         messages=[{"role": "user", "content": prompt}],
     )
 
-    category = response.choices[0].message.content.strip()
-    return category
+    raw_output = response.choices[0].message.content.strip()
+
+    try:
+        data = json.loads(raw_output)
+        return data.get("category", "Personal")
+    except:
+        return "Personal"
+
+
+def infer_category_from_sender(sender):
+    sender = sender.lower()
+
+    if "vit.edu" in sender:
+        return "College"
+    if "bank" in sender or "hdfc" in sender or "sbi" in sender:
+        return "Bank/Finance"
+    if "no-reply" in sender or "newsletter" in sender:
+        return "Subscriptions/Newsletters"
+    if "security" in sender:
+        return "Security Alert"
+    
+    return None
+
+
+def smart_categorize_email(subject, body, sender):
+    # 1️⃣ Domain-based quick classification
+    sender_based = infer_category_from_sender(sender)
+    if sender_based:
+        return sender_based
+
+    # 2️⃣ AI-based classification
+    ai_category = categorize_email_with_ai(subject, body, sender)
+
+    return ai_category
 
 
 def main():

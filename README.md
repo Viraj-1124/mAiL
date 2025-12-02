@@ -79,7 +79,7 @@ Deploy backend (Render / Railway)
 👨‍💻 Author
 Rushikesh Shinde
 📍VIT Pune | B.Tech CSE
-💡 Passionate about AI, automation, and smart systems.
+💡 Passionate about AI, automation, and Data Science.
 
 👨‍💻 Collaborator
 Guruprasad Melinkeri

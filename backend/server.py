@@ -3,8 +3,9 @@ from fastapi import FastAPI, Request, Form, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from google_auth_oauthlib.flow import Flow
-from email_summarizer.email_summarizer import categorize_email_with_ai
-from utils.subject_similarity import subject_similarity
+from email_summarizer.email_summarizer import categorize_email_with_ai 
+from scheduler import start_scheduler
+from database.helpers import save_email, assign_smart_thread_id
 import os
 import json
 import requests
@@ -26,6 +27,7 @@ from database.models import Feedback, Email
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+start_scheduler()
 
 # Gmail scopes
 SCOPES = [
@@ -110,59 +112,6 @@ def update_email_priority(email_id, new_priority):
     db.close()
 
 
-def assign_smart_thread_id(user_email, subject):
-    db = SessionLocal()
-
-    emails = db.query(Email).filter(Email.user_email == user_email).all()
-
-    best_match = None
-    best_score = 0
-
-    for email in emails:
-        score = subject_similarity(subject, email.subject)
-        if score > 85 and score > best_score:
-            best_match = email.smart_thread_id
-            best_score = score
-
-    db.close()
-
-    # If no match found → create new smart thread id
-    if not best_match:
-        return f"smart-{os.urandom(4).hex()}"
-
-    return best_match
-
-
-def save_email(email_id, user_email, sender, subject, body, summary, priority, thread_id):
-    db = SessionLocal()
-
-    # Avoid duplicates
-    existing = db.query(Email).filter(Email.email_id == email_id).first()
-    if existing:
-        db.close()
-        return
-    
-    category = categorize_email_with_ai(subject, body)
-    smart_thread_id = assign_smart_thread_id(user_email, subject)
-
-    new_email = Email(
-        email_id=email_id,
-        user_email=user_email,
-        sender=sender,
-        subject=subject,
-        body=body,
-        summary=summary,
-        priority=priority,
-        category=category,
-        thread_id=thread_id,
-        smart_thread_id=smart_thread_id
-    )
-
-    db.add(new_email)
-    db.commit()
-    db.close()
-
-
 @app.get("/fetch-emails")
 def fetch_emails(user_email: str):
     """Fetch last 24h Gmail emails and summarize"""
@@ -242,45 +191,89 @@ def get_smart_threads(user_email: str, db: Session = Depends(get_db)):
 
 
 @app.get("/threads")
-def get_threads(user_email: str, db: Session = Depends(get_db)):
+def get_threads(
+    user_email: str,
+    mode: str = "subject",     # default threading
+    db: Session = Depends(get_db)
+):
     emails = db.query(Email).filter(Email.user_email == user_email).all()
+    if not emails:
+        return {"threads": []}
 
     grouped = {}
+
     for email in emails:
-        if email.thread_id not in grouped:
-            grouped[email.thread_id] = []
-        grouped[email.thread_id].append({
+        # ----------------------------
+        # 1️⃣ Subject-based threading
+        # ----------------------------
+        if mode == "subject":
+            key = assign_smart_thread_id(email.subject)
+
+        # ----------------------------
+        # 2️⃣ Category-based threading
+        # ----------------------------
+        elif mode == "category":
+            key = email.category or "Uncategorized"
+
+        # ----------------------------
+        # 3️⃣ Priority-based threading
+        # ----------------------------
+        elif mode == "priority":
+            key = email.priority or "Medium"
+
+        # ----------------------------
+        # 4️⃣ Sender-based threading
+        # ----------------------------
+        elif mode == "sender":
+            key = email.sender.split("<")[0].strip()   # clean sender name
+
+        # ----------------------------
+        # 5️⃣ Date-based threading
+        # ----------------------------
+        elif mode == "date":
+            key = email.timestamp.date()
+
+        # ----------------------------
+        # Default fallback
+        # ----------------------------
+        else:
+            key = "Other"
+
+        if key not in grouped:
+            grouped[key] = []
+
+        grouped[key].append({
             "email_id": email.email_id,
             "sender": email.sender,
             "subject": email.subject,
             "summary": email.summary,
             "priority": email.priority,
             "category": email.category,
+            "thread_id": email.thread_id,
             "timestamp": email.timestamp
         })
 
+    # Convert dict → list for clean JSON output
     thread_list = [
-        {"thread_id": tid, "emails": msgs}
-        for tid, msgs in grouped.items()
+        {"group_key": str(key), "emails": msgs}
+        for key, msgs in grouped.items()
     ]
 
     return {"threads": thread_list}
 
 
-@app.post("/categorize")
-def categorize(email_id: str, db: Session = Depends(get_db)):
-    """AI categorizes a stored email and updates DB."""
-    
-    email = db.query(Email).filter(Email.email_id == email_id).first()
-    if not email:
-        return {"error": "Email not found"}
 
-    category = categorize_email_with_ai(email.subject, email.body)
+@app.get("/category-stats")
+def category_stats(user_email: str, db: Session = Depends(get_db)):
+    emails = db.query(Email).filter(Email.user_email == user_email).all()
 
-    email.category = category
-    db.commit()
+    stats = {}
+    for mail in emails:
+        cat = mail.category
+        stats[cat] = stats.get(cat, 0) + 1
 
-    return {"success": True, "email_id": email_id, "category": category}
+    return stats
+
 
 
 @app.get("/search")
