@@ -6,9 +6,11 @@ from google_auth_oauthlib.flow import Flow
 from email_summarizer.email_summarizer import categorize_email_with_ai 
 from scheduler import start_scheduler
 from database.helpers import save_email, assign_smart_thread_id
+from database.models import Email, EmailAttachment
 import os
 import json
 import requests
+import base64
 
 # Gmail summarizer functions
 from email_summarizer.email_summarizer import (
@@ -130,7 +132,7 @@ def fetch_emails(user_email: str):
 
     emails = []
     for msg in messages[:15]:
-        sender, subject, body, thread_id = get_email_details(service, msg['id'])
+        sender, subject, body, thread_id, attachments = get_email_details(service, msg['id'])
         summary = summarize_email(subject, body)
         emails.append({
             "email_id": msg["id"],
@@ -147,7 +149,8 @@ def fetch_emails(user_email: str):
         body=body,
         summary=summary,
         priority="Medium", 
-        thread_id=thread_id
+        thread_id=thread_id,
+        attachments=attachments
         )
 
     ai_data = analyze_emails_with_ai(emails)
@@ -203,39 +206,16 @@ def get_threads(
     grouped = {}
 
     for email in emails:
-        # ----------------------------
-        # 1️⃣ Subject-based threading
-        # ----------------------------
         if mode == "subject":
             key = assign_smart_thread_id(email.subject)
-
-        # ----------------------------
-        # 2️⃣ Category-based threading
-        # ----------------------------
         elif mode == "category":
             key = email.category or "Uncategorized"
-
-        # ----------------------------
-        # 3️⃣ Priority-based threading
-        # ----------------------------
         elif mode == "priority":
             key = email.priority or "Medium"
-
-        # ----------------------------
-        # 4️⃣ Sender-based threading
-        # ----------------------------
         elif mode == "sender":
             key = email.sender.split("<")[0].strip()   # clean sender name
-
-        # ----------------------------
-        # 5️⃣ Date-based threading
-        # ----------------------------
         elif mode == "date":
             key = email.timestamp.date()
-
-        # ----------------------------
-        # Default fallback
-        # ----------------------------
         else:
             key = "Other"
 
@@ -274,6 +254,20 @@ def category_stats(user_email: str, db: Session = Depends(get_db)):
 
     return stats
 
+
+@app.get("/attachments")
+def list_attachments(email_id: str, db: Session = Depends(get_db)):
+    attachments = db.query(EmailAttachment).filter(EmailAttachment.email_id == email_id).all()
+    
+    return [
+        {
+            "filename": att.filename,
+            "mime_type": att.mime_type,
+            "size": att.size,
+            "attachment_id": att.attachment_id
+        }
+        for att in attachments
+    ]
 
 
 @app.get("/search")

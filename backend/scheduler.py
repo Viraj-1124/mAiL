@@ -7,7 +7,7 @@ from email_summarizer.email_summarizer import (
     analyze_emails_with_ai
 )
 from database.database import SessionLocal
-from database.models import Email
+from database.models import Email,EmailAttachment
 from database.helpers import save_email
 import os
 
@@ -35,7 +35,7 @@ def auto_fetch_emails():
             continue
 
         for msg in messages:
-            sender, subject, body, thread_id = get_email_details(service, msg["id"])
+            sender, subject, body, thread_id, attachments = get_email_details(service, msg["id"])
             summary = summarize_email(subject, body)
 
             save_email(
@@ -46,7 +46,8 @@ def auto_fetch_emails():
                 body=body,
                 summary=summary,
                 priority="Medium",
-                thread_id=thread_id
+                thread_id=thread_id,
+                attachments=attachments
             )
 
     print("✅ Auto-fetch cycle completed")

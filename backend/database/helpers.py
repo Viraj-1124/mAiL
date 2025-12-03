@@ -1,5 +1,5 @@
 from database.database import SessionLocal
-from database.models import Email
+from database.models import Email, EmailAttachment
 from utils.subject_similarity import subject_similarity
 from email_summarizer.email_summarizer import smart_categorize_email
 import os
@@ -26,7 +26,7 @@ def assign_smart_thread_id(user_email, subject):
 
     return best_match
 
-def save_email(email_id, user_email, sender, subject, body, summary, priority, thread_id):
+def save_email(email_id, user_email, sender, subject, body, summary, priority, thread_id, attachments):
     db = SessionLocal()
 
     # Avoid duplicates
@@ -50,6 +50,15 @@ def save_email(email_id, user_email, sender, subject, body, summary, priority, t
         thread_id=thread_id,
         smart_thread_id=smart_thread_id
     )
+
+    for att in attachments:
+        db.add(EmailAttachment(
+            email_id=email_id,
+            filename=att["filename"],
+            mime_type=att["mime_type"],
+            size=att["size"],
+            attachment_id=att["attachment_id"]
+        ))
 
     db.add(new_email)
     db.commit()

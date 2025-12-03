@@ -66,36 +66,49 @@ def get_last_24h_emails(service):
 
 
 def get_email_details(service, msg_id):
-    msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
+    msg = service.users().messages().get(
+        userId='me',
+        id=msg_id,
+        format='full'
+    ).execute()
+
     headers = msg['payload']['headers']
+    parts = msg['payload'].get('parts', [])
 
     sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown Sender')
     subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
 
-    parts = msg['payload'].get('parts', [])
-    body = ''
-    if parts:
-        for part in parts:
-            if part['mimeType'] == 'text/plain':
-                data = part['body'].get('data')
-                if data:
-                    body = base64.urlsafe_b64decode(data).decode('utf-8')
-                    break
-            elif part['mimeType'] == 'text/html':
-                data = part['body'].get('data')
-                if data:
-                    html = base64.urlsafe_b64decode(data).decode('utf-8')
-                    soup = BeautifulSoup(html, 'html.parser')
-                    body = soup.get_text()
-                    break
-    else:
-        data = msg['payload']['body'].get('data')
+    body = ""
+    attachments = []
+
+    for part in parts:
+        mime_type = part.get("mimeType", "")
+        filename = part.get("filename", "")
+
+        # ATTACHMENT detection
+        if filename:
+            body_info = part.get("body", {})
+            attachments.append({
+                "filename": filename,
+                "mime_type": mime_type,
+                "size": body_info.get("size", 0),
+                "attachment_id": body_info.get("attachmentId")
+            })
+            continue
+
+        # Extract body (text/plain or html)
+        data = part.get("body", {}).get("data")
         if data:
-            body = base64.urlsafe_b64decode(data).decode('utf-8')
+            try:
+                decoded = base64.urlsafe_b64decode(data).decode("utf-8")
+                body = decoded
+            except:
+                pass
 
-    clean_body = body.strip().replace('\r', '').replace('\n', ' ')[:1000]
+    clean_body = body.strip().replace("\r", "").replace("\n", " ")[:2000]
+    thread_id = msg.get("threadId")
 
-    return sender, subject, clean_body, msg.get("threadId")
+    return sender, subject, clean_body, thread_id, attachments
 
 
 def summarize_email(subject, body):

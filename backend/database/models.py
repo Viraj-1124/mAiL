@@ -1,5 +1,6 @@
 # database/models.py
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, func, ForeignKey
+from sqlalchemy.orm import relationship
 from database.database import Base
 
 class Feedback(Base):
@@ -11,6 +12,7 @@ class Feedback(Base):
     priority = Column(String, nullable=False)
     is_correct = Column(Boolean, nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
 
 class Email(Base):
     """Store fetched and summarized emails."""
@@ -28,3 +30,18 @@ class Email(Base):
     smart_thread_id = Column(String, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
+    attachments = relationship("EmailAttachment", back_populates="email")
+
+
+
+class EmailAttachment(Base):
+    __tablename__ = "attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email_id = Column(String, ForeignKey("emails.email_id"))
+    filename = Column(String)
+    mime_type = Column(String)
+    size = Column(Integer)
+    attachment_id = Column(String)  # Gmail internal attachment ID
+
+    email = relationship("Email", back_populates="attachments")
